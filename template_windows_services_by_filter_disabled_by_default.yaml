@@ -1,0 +1,145 @@
+zabbix_export:
+  version: '7.4'
+  template_groups:
+    - uuid: 773b2a1c5b5444728fde1ecd586f2298
+      name: 'Templates/Operating systems'
+  templates:
+    - uuid: 89067434b2be4f2282488e397a9a7604
+      template: 'Template Windows Services by Filter'
+      name: 'Template Windows Services by Filter'
+      description: |
+        Monitor an arbitrary number of Windows services selected by discovery filter.
+        
+        Data model:
+        - service.discovery for low-level discovery
+        - filtered by host/template macros
+        - item prototypes based on service.info[]
+        
+        Set {$WIN.SVC.MATCH} to a regular expression matching the services that must be monitored.
+        Examples:
+        - ^Spooler$
+        - ^(Spooler|W32Time|Dnscache)$
+        - ^Zabbix.*
+        
+        Recommended use:
+        - link the template to a host
+        - override {$WIN.SVC.MATCH} on the host
+        - optionally set {$WIN.SVC.NOT_MATCHES} for exclusions
+      groups:
+        - name: 'Templates/Operating systems'
+      discovery_rules:
+        - uuid: 551f550571f143af947c673464a6bf7e
+          name: 'Windows services discovery by filter'
+          key: service.discovery
+          delay: 1h
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#SERVICE.NAME}'
+                value: '{$WIN.SVC.MATCH}'
+              - macro: '{#SERVICE.NAME}'
+                value: '{$WIN.SVC.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+          item_prototypes:
+            - uuid: 5181806b4ec041c38ca1261b60db70cd
+              name: 'Service {#SERVICE.NAME} ({#SERVICE.DISPLAYNAME}) description'
+              key: 'service.info["{#SERVICE.NAME}",description]'
+              delay: 1h
+              history: 30d
+              value_type: TEXT
+            - uuid: 432d057d528f4ca6908bcea0c354629f
+              name: 'Service {#SERVICE.NAME} ({#SERVICE.DISPLAYNAME}) display name'
+              key: 'service.info["{#SERVICE.NAME}",displayname]'
+              delay: 1h
+              history: 30d
+              value_type: TEXT
+            - uuid: 2fbd3b4aae354435987be57012fb31e8
+              name: '_INTERNAL_: Service {#SERVICE.NAME} startup code'
+              key: 'service.info["{#SERVICE.NAME}",startup]'
+              delay: 1h
+              history: 30d
+              description: 'Numeric Windows service startup type code. 0=automatic, 1=automatic delayed, 2=manual, 3=disabled, 4=unknown, 5=automatic trigger start, 6=automatic delayed trigger start, 7=manual trigger start.'
+            - uuid: 0b4fa54f71ac4dcfaef88d0b006bf538
+              name: '_INTERNAL_: Service {#SERVICE.NAME} state code'
+              key: 'service.info["{#SERVICE.NAME}",state]'
+              history: 30d
+              description: 'Numeric Windows service state code. 0=running, 1=paused, 2=start pending, 3=pause pending, 4=continue pending, 5=stop pending, 6=stopped, 7=unknown, 255=no such service.'
+              trigger_prototypes:
+                - uuid: 69fcfd9c2b44429290c51f29da87abc5
+                  expression: 'last(/Template Windows Services by Filter/service.info["{#SERVICE.NAME}",state])=255'
+                  name: 'Service {#SERVICE.NAME} ({#SERVICE.DISPLAYNAME}) does not exist'
+                  priority: AVERAGE
+                  description: 'The monitored Windows service was not found on the host.'
+                - uuid: 9d55dc909238474f93e24aa483531b0a
+                  expression: 'min(/Template Windows Services by Filter/service.info["{#SERVICE.NAME}",state],{$WIN.SVC.FAIL.WINDOW})<>0 and last(/Template Windows Services by Filter/service.info["{#SERVICE.NAME}",state])<>255'
+                  name: 'Service {#SERVICE.NAME} ({#SERVICE.DISPLAYNAME}) is not running'
+                  priority: HIGH
+                  description: 'The monitored Windows service exists but is not in Running state for longer than {$WIN.SVC.FAIL.WINDOW}.'
+            - uuid: 16c8f926b9f848c499f50337647fa7df
+              name: 'Service {#SERVICE.NAME} ({#SERVICE.DISPLAYNAME}) startup type'
+              type: DEPENDENT
+              key: 'windows.service.startup.text["{#SERVICE.NAME}"]'
+              history: 30d
+              value_type: TEXT
+              description: 'Human-readable Windows service startup type.'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var v = String(value).trim();
+                      switch (v) {
+                        case '0': return 'Automatic';
+                        case '1': return 'Automatic (delayed)';
+                        case '2': return 'Manual';
+                        case '3': return 'Disabled';
+                        case '4': return 'Unknown';
+                        case '5': return 'Automatic (trigger start)';
+                        case '6': return 'Automatic delayed (trigger start)';
+                        case '7': return 'Manual (trigger start)';
+                        default: return 'Unknown (' + v + ')';
+                      }
+              master_item:
+                key: 'service.info["{#SERVICE.NAME}",startup]'
+            - uuid: e85d8ae0a5cf4717a2e5a821e56a2d4b
+              name: 'Service {#SERVICE.NAME} ({#SERVICE.DISPLAYNAME}) state'
+              type: DEPENDENT
+              key: 'windows.service.state.text["{#SERVICE.NAME}"]'
+              history: 30d
+              value_type: TEXT
+              description: 'Human-readable Windows service state.'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var v = String(value).trim();
+                      switch (v) {
+                        case '0': return 'Running';
+                        case '1': return 'Paused';
+                        case '2': return 'Start pending';
+                        case '3': return 'Pause pending';
+                        case '4': return 'Continue pending';
+                        case '5': return 'Stop pending';
+                        case '6': return 'Stopped';
+                        case '7': return 'Unknown';
+                        case '255': return 'Does not exist';
+                        default: return 'Unknown (' + v + ')';
+                      }
+              master_item:
+                key: 'service.info["{#SERVICE.NAME}",state]'
+      tags:
+        - tag: class
+          value: os
+        - tag: target
+          value: services
+        - tag: target
+          value: windows
+      macros:
+        - macro: '{$WIN.SVC.FAIL.WINDOW}'
+          value: 5m
+          description: 'Service must stay not running for this time before trigger fires.'
+        - macro: '{$WIN.SVC.MATCH}'
+          value: ^$
+          description: 'Regular expression for services to include in discovery. Default ^$ means nothing is monitored until the macro is overridden on the host.'
+        - macro: '{$WIN.SVC.NOT_MATCHES}'
+          value: ^$
+          description: 'Regular expression for services to exclude from discovery.'
